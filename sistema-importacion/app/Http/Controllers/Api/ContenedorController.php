@@ -65,6 +65,64 @@ class ContenedorController extends BaseController
         }
     }
 
+    public function update(Request $request, $id): JsonResponse
+    {
+        $contenedor = Contenedor::find($id);
+
+        if (!$contenedor) {
+            return $this->sendError('Contenedor no encontrado.', [], 404);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'numero_contenedor' => 'sometimes|required|string|unique:contenedores,numero_contenedor,' . $id,
+            'tipo' => 'sometimes|required|in:20ft,40ft,reefer,45ft',
+            'fecha_estimada_llegada' => 'sometimes|required|date',
+            'estado' => 'sometimes|nullable|in:en_transito,llegado,descargado',
+            'productos' => 'sometimes|nullable|array',
+            'productos.*.producto_id' => 'required_with:productos|exists:productos_importados,id',
+            'productos.*.cantidad' => 'required_with:productos|integer|min:1'
+        ]);
+
+        if ($validator->fails()) {
+            return $this->sendError('Error de validación.', $validator->errors(), 422);
+        }
+
+        DB::beginTransaction();
+        try {
+            // Actualizar los campos del contenedor
+            $contenedor->update($request->only([
+                'numero_contenedor',
+                'tipo', 
+                'fecha_estimada_llegada',
+                'estado'
+            ]));
+
+            // Si se proporcionan productos, actualizar la relación
+            if ($request->has('productos')) {
+                // Primero eliminar todas las relaciones existentes
+                $contenedor->productos()->detach();
+                
+                // Luego agregar las nuevas relaciones
+                if (!empty($request->productos)) {
+                    foreach ($request->productos as $productoData) {
+                        $contenedor->productos()->attach($productoData['producto_id'], [
+                            'cantidad' => $productoData['cantidad']
+                        ]);
+                    }
+                }
+            }
+
+            $contenedor->load('productos');
+
+            DB::commit();
+            return $this->sendResponse($contenedor, 'Contenedor actualizado exitosamente.');
+            
+        } catch (\Exception $e) {
+            DB::rollback();
+            return $this->sendError('Error al actualizar el contenedor.', [$e->getMessage()], 500);
+        }
+    }
+
     public function destroy($id): JsonResponse
     {
         $contenedor = Contenedor::find($id);
